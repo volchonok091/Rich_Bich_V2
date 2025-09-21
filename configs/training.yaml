@@ -1,0 +1,85 @@
+﻿experiment_name: baseline_multilingual
+data:
+  tickers:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMZN
+    - GOOGL
+    - META
+    - TSLA
+    - NFLX
+    - BABA
+    - NVS
+    - BTC-USD
+    - ETH-USD
+    - GAZP.ME
+    - SBER.ME
+    - LKOH.ME
+    - ROSN.ME
+    - VTBR.ME
+    - YNDX
+    - TCSG.ME
+    - F
+    - INTC
+    - AMD
+    - BA
+    - JPM
+    - XOM
+    - WMT
+    - KO
+    - NAS100
+  start_date: '2025-07-20'
+  end_date: '2025-09-20'
+  interval: 1d
+  price_cache_dir: data/raw/prices
+news:
+  per_ticker_queries:
+    AAPL: ["Apple Inc", "AAPL", "iPhone", "MacBook"]
+    MSFT: ["Microsoft", "MSFT", "Azure", "Windows"]
+    NVDA: ["NVIDIA", "NVDA", "graphics", "AI chips"]
+    AMZN: ["Amazon", "Amazon.com", "AMZN", "AWS"]
+    GOOGL: ["Alphabet", "Google", "GOOGL", "Android"]
+    META: ["Meta Platforms", "Facebook", "META", "Instagram"]
+    TSLA: ["Tesla", "TSLA", "Gigafactory", "Elon Musk"]
+    NFLX: ["Netflix", "NFLX", "streaming", "original series"]
+    BABA: ["Alibaba", "BABA", "Taobao", "Tmall"]
+    NVS: ["Novartis", "NVS", "pharma Switzerland"]
+    BTC-USD: ["Bitcoin", "BTC", "crypto market"]
+    ETH-USD: ["Ethereum", "ETH", "smart contracts"]
+    GAZP.ME: ["Gazprom", "GAZP", "Газпром"]
+    SBER.ME: ["Sberbank", "SBER", "Сбербанк"]
+    LKOH.ME: ["Lukoil", "LUKOIL", "Лукойл"]
+    ROSN.ME: ["Rosneft", "ROSN", "Роснефть"]
+    VTBR.ME: ["VTB", "VTBR", "ВТБ"]
+    YNDX: ["Yandex", "YNDX", "Яндекс"]
+    TCSG.ME: ["Tinkoff", "TCS", "TCSG", "Тинькофф"]
+    F: ["Ford", "F", "Ford Motor"]
+    INTC: ["Intel", "INTC", "chipmaker"]
+    AMD: ["AMD", "Advanced Micro Devices", "Ryzen"]
+    BA: ["Boeing", "BA", "aircraft"]
+    JPM: ["JP Morgan", "JPM", "investment bank"]
+    XOM: ["Exxon", "XOM", "oil major"]
+    WMT: ["Walmart", "WMT", "retail giant"]
+    KO: ["Coca-Cola", "KO", "beverage"]
+    NAS100: ["Nasdaq 100", "NASDAQ", "tech index"]
+  start_date: '2025-07-20'
+  end_date: '2025-09-20'
+  max_records: 200
+  batch_days: 7
+  sleep_seconds: 0.5
+  cache_dir: data/raw/news
+features:
+  sentiment_rolling_days: 3
+  price_rolling_days: 5
+  target_horizon_days: 1
+  min_news_per_day: 0
+  processed_dir: data/processed
+model:
+  estimator: random_forest
+  test_size: 0.2
+  random_state: 42
+  params:
+    n_estimators: 400
+    max_depth: 6
+  model_dir: models

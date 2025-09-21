@@ -1,0 +1,90 @@
+Metadata-Version: 2.4
+Name: richbich
+Version: 0.1.0
+Summary: Multilingual market movement forecaster
+Author-email: Your Name <you@example.com>
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+
+# RichBich: Multilingual Market Movement Forecaster
+
+RichBich turns the exploratory notebook into a production-oriented Python project. It gathers
+10 years of market data, harvests multilingual news from open sources, extracts language-aware
+sentiment signals, and trains a supervised model to predict next-day direction for configured tickers.
+
+## Project Layout
+
+- `src/richbich/` - Python package with reusable components
+  - `data/` - price and news ingestion utilities
+  - `nlp/` - multilingual text enrichment and sentiment analysis
+  - `features/` - feature engineering and dataset assembly
+  - `modeling/` - training, evaluation, and persistence helpers
+  - `utils/` - logging and IO helpers
+- `scripts/` - command line entry points
+- `configs/` - YAML configuration files defining tickers, horizons, and model hyper parameters
+- `notebooks/` - legacy experimentation notebooks (original work lives here)
+- `data/` - local cache (ignored by git) for raw and processed artifacts
+
+## Quickstart
+
+```bash
+# Create environment and install dependencies
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Download ten years of daily bars and related news
+python scripts\download_all.py --config configs\training.yaml
+
+# Train the model and export artifacts
+python scripts\train.py --config configs\training.yaml
+```
+
+## Configuration
+
+`configs/training.yaml` drives every step. Key sections:
+
+- `data.tickers` - target tickers (for example `AAPL`, `MSFT`)
+- `news.per_ticker_queries` - terms sent to the GDELT Doc API
+- `features` - rolling windows and news aggregation thresholds
+- `model` - estimator hyper parameters and evaluation split
+
+Adjust the start and end dates to control the training window. By default the project loads a
+full decade of data.
+
+## Outputs
+
+- `data/raw/` - cached CSV files for prices and news
+- `data/processed/` - merged feature tables
+- `models/` - persisted model binaries and metrics reports
+
+## Notes
+
+- GDELT offers global, translated news in 65+ languages. Requests are rate limited, so the
+  downloader throttles automatically.
+- The multilingual sentiment component uses a HuggingFace transformer. Ensure you have GPU
+  resources or patience on CPU for large batches.
+- The sample configuration targets binary direction classification (up or down). Extend the
+  feature builder for regression horizons (for example percent return) if required.
+
+## Telegram Bot
+
+The project ships with a Telegram bot that surfaces recent news and model forecasts:
+
+1. Ensure you have run the data download and training steps so that processed CSVs and a model artefact exist.
+2. Install dependencies (`python-telegram-bot` is listed in `requirements.txt`).
+3. Provide your token via `set TELEGRAM_BOT_TOKEN=...` (or enter it when the launcher asks).
+4. Start the bot: `python scripts\run_bot.py --config configs\training.yaml` or run the guided launcher `python scripts\start_bot.py`.
+5. (Optional) Set `OPENAI_API_KEY=...` to enable LLM-based consultant responses; without it the bot falls back to heuristic explanations.
+
+Available commands inside Telegram:
+- `/predict <ticker>` — prints the latest probability of an up move using the saved model.
+- `/news <ticker> [days]` — returns the most recent cached news items with sentiment scores.
+- `/help` — shows usage and the tickers configured in `training.yaml`.
+- Free text (например, «что с Apple», «анализ Газпром») — бот распознаёт компанию по словарю и отвечает как консультант.
+
+The lookup dictionary lives in `configs/company_index.csv`: add rows or aliases if вы хотите поддержать больше эмитентов.

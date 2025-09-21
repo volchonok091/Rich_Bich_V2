@@ -1,0 +1,78 @@
+﻿# List of news sources to ingest via RSS/Atom feeds.
+# Extend as needed; only open/public feeds listed here.
+rss:
+  - id: reuters_markets
+    name: Reuters Markets
+    url: https://www.reuters.com/finance/markets/rss
+    language: en
+    tags: [markets, global]
+  - id: wsj_marketbeat
+    name: Wall Street Journal MarketBeat
+    url: https://feeds.a.dj.com/rss/RSSMarketsMain.xml
+    language: en
+    tags: [markets, us]
+  - id: yahoo_finance_world
+    name: Yahoo Finance World Markets
+    url: https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US
+    language: en
+    tags: [markets, us]
+  - id: marketwatch_pulse
+    name: MarketWatch MarketPulse
+    url: https://feeds.marketwatch.com/marketwatch/marketpulse/
+    language: en
+    tags: [markets, us]
+  - id: cnbc_markets
+    name: CNBC Markets
+    url: https://www.cnbc.com/id/10001147/device/rss/rss.html
+    language: en
+    tags: [markets, us]
+  - id: handelsblatt_finance
+    name: Handelsblatt Finanzen
+    url: https://www.handelsblatt.com/contentexport/feed/finanzen
+    language: de
+    tags: [markets, de]
+  - id: manager_magazin
+    name: Manager Magazin Wirtschaft
+    url: https://www.manager-magazin.de/rss/
+    language: de
+    tags: [economy, de]
+  - id: faz_wirtschaft
+    name: FAZ Wirtschaft
+    url: https://www.faz.net/rss/aktuell/wirtschaft/
+    language: de
+    tags: [economy, de]
+  - id: alarabiya_business
+    name: Al Arabiya Business
+    url: https://www.alarabiya.net/.mrss/ar/business.xml
+    language: ar
+    tags: [business, mena]
+  - id: asharaq_business
+    name: Asharq Business
+    url: https://www.asharqbusiness.com/rss
+    language: ar
+    tags: [business, mena]
+  - id: aljazeera_economy
+    name: Al Jazeera Economy
+    url: https://www.aljazeera.net/economy/feed
+    language: ar
+    tags: [economy, mena]
+  - id: rbc_finance
+    name: RBC Finance
+    url: https://www.rbc.ru/story/finance.rss
+    language: ru
+    tags: [finance, ru]
+  - id: kommersant
+    name: Kommersant News
+    url: https://www.kommersant.ru/RSS/news.xml
+    language: ru
+    tags: [economy, ru]
+  - id: vedomosti
+    name: Vedomosti
+    url: https://www.vedomosti.ru/rss/news
+    language: ru
+    tags: [economy, ru]
+  - id: interfax
+    name: Interfax Business
+    url: https://www.interfax.ru/rss.asp
+    language: ru
+    tags: [business, ru]
