@@ -46,6 +46,27 @@ class LauncherApp:
 
         self.master.protocol("WM_DELETE_WINDOW", self.on_close)
 
+    def _bind_context_menu(self, widget: tk.Widget) -> None:
+        menu = tk.Menu(widget, tearoff=0)
+        menu.add_command(label="Cut", command=lambda: widget.event_generate('<<Cut>>'))
+        menu.add_command(label="Copy", command=lambda: widget.event_generate('<<Copy>>'))
+        menu.add_command(label="Paste", command=lambda: widget.event_generate('<<Paste>>'))
+        menu.add_separator()
+        menu.add_command(label="Select All", command=lambda: widget.event_generate('<<SelectAll>>'))
+
+        def _show_menu(event: tk.Event) -> None:
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+
+        def _select_all(event: tk.Event) -> str:
+            widget.event_generate('<<SelectAll>>')
+            return 'break'
+
+        widget.bind('<Button-3>', _show_menu, add='+')
+        widget.bind('<Control-a>', _select_all, add='+')
+
     def _build_ui(self) -> None:
         container = ttk.Frame(self.master, padding=16)
         container.grid(row=0, column=0, sticky="nsew")
@@ -90,6 +111,7 @@ class LauncherApp:
         self.log_text = tk.Text(container, height=18, wrap="word", state=tk.DISABLED)
         self.log_text.grid(column=0, row=9, columnspan=3, sticky="nsew")
         container.rowconfigure(9, weight=1)
+        self._bind_context_menu(self.log_text)
 
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.log_text.yview)
         scrollbar.grid(column=3, row=9, sticky="ns")
@@ -107,6 +129,7 @@ class LauncherApp:
         ttk.Label(parent, text=label, anchor="w").grid(column=0, row=row, sticky="w", pady=4)
         entry = ttk.Entry(parent, textvariable=variable, show=show or "")
         entry.grid(column=1, row=row, columnspan=2, sticky="ew", padx=(8, 0))
+        self._bind_context_menu(entry)
 
     def _add_labeled_combobox(
         self,
@@ -121,6 +144,7 @@ class LauncherApp:
         combo = ttk.Combobox(parent, textvariable=variable, values=values, state="readonly")
         combo.grid(column=1, row=row, columnspan=2, sticky="ew", padx=(8, 0))
         combo.set(variable.get() if variable.get() in values else values[0])
+        self._bind_context_menu(combo)
 
     def _start_log_pump(self) -> None:
         if self._log_after_id is None:

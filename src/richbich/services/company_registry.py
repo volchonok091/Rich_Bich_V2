@@ -10,6 +10,7 @@ from typing import Iterable, List, Sequence
 import csv
 
 from richbich.utils.logging import get_logger
+from richbich.utils.aliases import alias_terms_for
 
 LOGGER = get_logger(__name__)
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
@@ -83,8 +84,22 @@ def symbol_aliases(symbol: str) -> Sequence[str]:
     upper = symbol.strip().upper()
     for record in load_company_records():
         if record.symbol == upper:
-            return record.aliases
-    return ()
+            dynamic = {
+                _normalise(term)
+                for term in alias_terms_for(upper)
+                if _normalise(term)
+            }
+            aliases = set(record.aliases) | dynamic
+            return tuple(sorted(aliases))
+    dynamic_only = {
+        _normalise(term)
+        for term in alias_terms_for(upper)
+        if _normalise(term)
+    }
+    return tuple(sorted(dynamic_only))
+
+
+
 
 
 def find_by_symbol(symbol: str) -> CompanyRecord | None:
@@ -101,3 +116,4 @@ def iter_records() -> Iterable[CompanyRecord]:
 
 def normalise_query(text: str) -> str:
     return _normalise(text)
+

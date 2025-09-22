@@ -64,7 +64,6 @@ class ForecastService:
         self._pipeline = self._load_model(model_path)
         self._feature_columns = self._determine_feature_columns()
         self._tickers = {t.upper() for t in cfg.data.tickers}
-        self._company_records = list(company_registry.iter_records())
         self._local_feed_path = Path("data/processed/news_feed.jsonl")
         self._sentiment = SentimentAnalyzer()
         self._feature_builder = FeatureBuilder(cfg.features)
@@ -72,6 +71,13 @@ class ForecastService:
         self._llm = LLMClient()
         self._price_cache_dir = ensure_dir(Path(cfg.data.price_cache_dir))
         self._adhoc_news_dir = ensure_dir(Path(cfg.news.cache_dir) / "adhoc")
+
+        threshold = float(getattr(cfg.model, "direction_threshold", 0.6))
+        self._direction_threshold = min(max(threshold, 0.5), 0.95)
+        self._down_threshold = max(0.0, 1.0 - self._direction_threshold)
+        neutral_band = float(getattr(cfg.model, "neutral_band", 0.05))
+        self._neutral_band = max(0.0, min(neutral_band, 0.2))
+        self._news_window_days = max(7, int(getattr(cfg.news, "inference_window_days", 60)))
 
     def _load_features(self) -> pd.DataFrame:
         if not self.features_path.exists():
@@ -115,19 +121,32 @@ class ForecastService:
     def list_tickers(self) -> List[str]:
         return sorted(self._tickers)
 
-    def _resolve_ticker(self, ticker: str) -> Optional[str]:
-        symbol = ticker.upper()
-        return symbol if symbol in self._tickers else None
+    def _resolve_ticker(self, ticker: str) -> str:
+        return ticker.strip().upper()
 
     def latest_prediction(self, ticker: str) -> ForecastResult:
         symbol = self._resolve_ticker(ticker)
-        if not symbol:
-            raise ValueError(f"Ticker '{ticker}' is not tracked. Known tickers: {', '.join(self.list_tickers())}")
         subset = self._features[self._features["ticker"] == symbol].sort_values("date")
         if subset.empty:
-            raise ValueError(f"No feature rows available for {symbol}. Run the pipeline to refresh data.")
+            matches = self.match_companies(symbol, limit=1)
+            match = matches[0] if matches else CompanyMatch(symbol, symbol, symbol, None, None)
+            report = self._build_report(match, original_query=ticker)
+            if report.probability_up is None:
+                raise ValueError(f"Нет статистики для {symbol}. Попробуйте позже или уточните запрос.")
+            probability = report.probability_up
+            direction = "up" if probability >= 0.5 else "down"
+            close_value = report.latest_close if report.latest_close is not None else float("nan")
+            return ForecastResult(
+                ticker=report.symbol,
+                date=datetime.utcnow().strftime("%Y-%m-%d"),
+                probability_up=probability,
+                direction=direction,
+                close=close_value,
+            )
         latest = subset.iloc[-1]
         features = latest[self._feature_columns].to_frame().T
+        features = features.fillna(0.0)
+        features = features.infer_objects(copy=False)
         if hasattr(self._pipeline, "predict_proba"):
             proba_up = float(self._pipeline.predict_proba(features)[0][1])
         else:
@@ -142,19 +161,31 @@ class ForecastService:
         )
 
     def recent_news(self, ticker: str, days: int = 3, limit: int = 5) -> List[dict]:
-        if self._news.empty:
-            return []
         symbol = self._resolve_ticker(ticker)
-        if not symbol:
-            raise ValueError(f"Ticker '{ticker}' is not tracked. Known tickers: {', '.join(self.list_tickers())}")
-        news = self._news[self._news["ticker"] == symbol]
-        if news.empty:
+        base = self._news[self._news["ticker"] == symbol].copy() if not self._news.empty else pd.DataFrame()
+        if base.empty:
+            matches = self.match_companies(symbol, limit=1)
+            match = matches[0] if matches else CompanyMatch(symbol, symbol, symbol, None, None)
+            annotated_news = self._fetch_news_dataset(match, window_days=max(days, self.cfg.news.batch_days))
+        else:
+            annotated_news = base
+        if annotated_news.empty:
             return []
-        cutoff = news["date"].max() - timedelta(days=days)
+        news = annotated_news.copy()
+        if "date" in news.columns:
+            news["date"] = pd.to_datetime(news["date"], errors="coerce").dt.tz_localize(None)
+        elif "seen_datetime" in news.columns:
+            news["date"] = pd.to_datetime(news["seen_datetime"], errors="coerce").dt.tz_localize(None)
+        else:
+            news["date"] = pd.to_datetime(news.get("seen_datetime"), errors="coerce").dt.tz_localize(None)
+        news.dropna(subset=["date"], inplace=True)
+        if "sentiment_score" not in news.columns:
+            news = self._annotate_news(news)
+        cutoff = datetime.utcnow() - timedelta(days=days)
         order_col = "seen_datetime" if "seen_datetime" in news.columns else "date"
-        recent = news[news["date"] >= cutoff].sort_values(order_col, ascending=False).head(limit)
+        filtered = news[news["date"] >= cutoff].sort_values(order_col, ascending=False).head(limit)
         records: List[dict] = []
-        for _, row in recent.iterrows():
+        for _, row in filtered.iterrows():
             records.append(
                 {
                     "date": row.get("date").strftime("%Y-%m-%d") if pd.notna(row.get("date")) else "",
@@ -167,41 +198,6 @@ class ForecastService:
             )
         return records
 
-    def match_companies(self, query: str, limit: int = 5) -> List[CompanyMatch]:
-        records = self._company_records
-        if not query or not query.strip():
-            return []
-        cleaned = query.strip()
-        norm = company_registry.normalise_query(cleaned)
-        matches: List[CompanyMatch] = []
-        direct = company_registry.find_by_symbol(cleaned)
-        if direct:
-            matches.append(
-                CompanyMatch(direct.symbol, direct.company, direct.company, direct.exchange, 1.0)
-            )
-        for record in records:
-            if any(match.symbol == record.symbol for match in matches):
-                continue
-            if norm in record.aliases:
-                matches.append(
-                    CompanyMatch(record.symbol, record.company, record.company, record.exchange, 0.9)
-                )
-        if len(matches) < limit:
-            aliases = {alias: record for record in records for alias in record.aliases}
-            for alias, record in aliases.items():
-                if alias.startswith(norm) or norm in alias:
-                    if any(match.symbol == record.symbol for match in matches):
-                        continue
-                    matches.append(
-                        CompanyMatch(record.symbol, record.company, record.company, record.exchange, 0.75)
-                    )
-        if not matches:
-            compact = cleaned.replace(" ", "")
-            upper = compact.upper()
-            if compact == upper and upper.isalnum() and 1 <= len(upper) <= 6:
-                matches.append(CompanyMatch(upper, upper, upper, None, None))
-        return matches[:limit]
-
     def build_report_from_match(
         self,
         match: CompanyMatch,
@@ -210,11 +206,71 @@ class ForecastService:
     ) -> AdvisoryReport:
         return self._build_report(match, original_query=original_query)
 
-    def analyse_free_text(self, text: str) -> AdvisoryReport:
-        matches = self.match_companies(text)
-        if not matches:
-            raise ValueError("Не удалось распознать компанию по запросу. Уточни название или тикер.")
-        return self._build_report(matches[0], original_query=text)
+    def match_companies(self, query: str, limit: int = 5) -> List[CompanyMatch]:
+        if not query or not query.strip():
+            return []
+        try:
+            matches = search_company(query, count=limit)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.error("Company search failed for %s: %s", query, exc)
+            matches = []
+        return matches[:limit]
+
+    def _build_query_terms(self, match: CompanyMatch) -> List[str]:
+        terms: set[str] = {match.symbol.upper()}
+        for value in (match.shortname, match.longname):
+            if value:
+                terms.add(value)
+        try:
+            aliases = company_registry.symbol_aliases(match.symbol)
+        except Exception:  # pragma: no cover - defensive
+            aliases = ()
+        for alias in aliases:
+            if alias:
+                terms.add(alias)
+        return [term for term in sorted(terms) if term]
+
+    def _fetch_news_dataset(self, match: CompanyMatch, window_days: int) -> pd.DataFrame:
+        symbol = match.symbol.upper()
+        company_name = match.shortname or match.longname or symbol
+        now = datetime.utcnow()
+        query_terms = self._build_query_terms(match)
+        news_df = pd.DataFrame()
+        if query_terms:
+            news_start = (now - timedelta(days=window_days)).date().isoformat()
+            news_end = now.date().isoformat()
+            try:
+                news_df = fetch_news_for_ticker(
+                    symbol,
+                    list(query_terms),
+                    news_start,
+                    news_end,
+                    batch_days=self.cfg.news.batch_days,
+                    max_records=self.cfg.news.max_records,
+                    sleep_seconds=max(0.2, self.cfg.news.sleep_seconds),
+                    cache_dir=self._adhoc_news_dir,
+                )
+            except Exception as exc:  # pragma: no cover
+                LOGGER.error("Failed to fetch news for %s: %s", symbol, exc)
+                news_df = pd.DataFrame()
+        local_news = self._local_news_for(symbol, company_name, days=window_days)
+        if not local_news.empty:
+            if news_df.empty:
+                news_df = local_news
+            else:
+                news_df = pd.concat([news_df, local_news], ignore_index=True)
+                news_df.drop_duplicates(subset=["title", "url"], inplace=True)
+        if news_df.empty:
+            return news_df
+        if "date" in news_df.columns:
+            news_df["date"] = pd.to_datetime(news_df["date"], errors="coerce")
+        if "seen_datetime" in news_df.columns:
+            seen_series = pd.to_datetime(news_df["seen_datetime"], errors="coerce", utc=True)
+            try:
+                news_df["seen_datetime"] = seen_series.dt.tz_localize(None)
+            except AttributeError:
+                news_df["seen_datetime"] = seen_series
+        return self._annotate_news(news_df)
 
     def _build_report(
         self,
@@ -239,35 +295,7 @@ class ForecastService:
             LOGGER.error("Price download failed for %s: %s", symbol, exc)
             prices = pd.DataFrame()
 
-        news_start = (now - timedelta(days=30)).date().isoformat()
-        news_end = now.date().isoformat()
-        query_terms = [term for term in {match.shortname, match.longname, symbol} if term]
-        news_df = pd.DataFrame()
-        if query_terms:
-            try:
-                news_df = fetch_news_for_ticker(
-                    symbol,
-                    query_terms,
-                    news_start,
-                    news_end,
-                    batch_days=self.cfg.news.batch_days,
-                    max_records=self.cfg.news.max_records,
-                    sleep_seconds=max(0.2, self.cfg.news.sleep_seconds),
-                    cache_dir=self._adhoc_news_dir,
-                )
-            except Exception as exc:  # pragma: no cover
-                LOGGER.error("Failed to fetch news for %s: %s", symbol, exc)
-                news_df = pd.DataFrame()
-
-        local_news = self._local_news_for(symbol, company_name)
-        if not local_news.empty:
-            if news_df.empty:
-                news_df = local_news
-            else:
-                news_df = pd.concat([news_df, local_news], ignore_index=True)
-                news_df.drop_duplicates(subset=["title", "url"], inplace=True)
-
-        annotated_news = self._annotate_news(news_df)
+        annotated_news = self._fetch_news_dataset(match, window_days=self._news_window_days)
         feature_frame = self._build_features_for_inference(prices, annotated_news, symbol)
         probability, direction = self._score_probability(feature_frame)
         latest_close, price_change = self._extract_price_metrics(feature_frame)
@@ -374,11 +402,20 @@ class ForecastService:
             return None, None
         latest = feature_frame.sort_values("date").iloc[[-1]]
         matrix = latest[self._feature_columns].reindex(columns=self._feature_columns, fill_value=0.0)
+        matrix = matrix.fillna(0.0)
         if hasattr(self._pipeline, "predict_proba"):
             proba = float(self._pipeline.predict_proba(matrix)[0][1])
         else:
             proba = float(self._pipeline.predict(matrix)[0])
-        direction = "рост" if proba >= 0.5 else "снижение"
+        direction: Optional[str]
+        if proba >= self._direction_threshold:
+            direction = "рост"
+        elif proba <= self._down_threshold:
+            direction = "снижение"
+        elif abs(proba - 0.5) <= self._neutral_band:
+            direction = "нейтрально"
+        else:
+            direction = "неопределённо"
         return proba, direction
 
     @staticmethod
@@ -609,6 +646,30 @@ class TelegramForecastBot:
                 return parts[1:]
         return []
 
+    @staticmethod
+    def _sanitize_input_query(text: str) -> str:
+        """Normalise free text messages before company matching."""
+        if not text:
+            return ""
+        cleaned = text.strip()
+        lowered = cleaned.lower()
+        for prefix in ("/start", "/help", "/predict", "/news"):
+            if lowered.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                break
+        for ch in ("@", "#", ",", ";", "|", "\n", "\t"):
+            cleaned = cleaned.replace(ch, " ")
+        tokens = []
+        for token in cleaned.split():
+            stripped = token.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("/"):
+                continue
+            if any(ch.isalpha() for ch in stripped) or stripped.isdigit():
+                tokens.append(stripped)
+        return " ".join(tokens)
+
     async def predict(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         args = self._extract_args(update, context)
         if not args:
@@ -620,13 +681,18 @@ class TelegramForecastBot:
         except ValueError as exc:
             await self._reply(update, str(exc))
             return
+        probability_text = f"{result.probability_up:.2%}" if result.probability_up is not None else "недоступно"
+        close_text = f"{result.close:.2f}" if result.close is not None else "недоступно"
+        direction_text = result.direction.capitalize() if result.direction else "нет сигнала"
         message = (
             f"Тикер: {result.ticker}\n"
             f"Дата признаков: {result.date}\n"
-            f"Цена закрытия: {result.close:.2f}\n"
-            f"Вероятность роста: {result.probability_up:.2%}\n"
-            f"Прогноз направления: {result.direction.upper()}"
+            f"Цена закрытия: {close_text}\n"
+            f"Вероятность роста: {probability_text}\n"
+            f"Прогноз направления: {direction_text}"
         )
+        if result.direction in {"неопределённо", "нейтрально"}:
+            message += "\nСигнал слабый: рекомендация требует дополнительной проверки."
         await self._reply(update, message)
 
     async def news(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -667,19 +733,30 @@ class TelegramForecastBot:
         message = update.effective_message
         if not message or not message.text:
             return
-        query = message.text.strip()
+        raw_text = message.text or ""
+        query = raw_text.strip()
+        cleaned_query = self._sanitize_input_query(query)
         pending_matches: List[CompanyMatch] | None = context.user_data.get("pending_matches")
         if pending_matches:
-            chosen = self._select_match(query, pending_matches)
-            if not chosen:
-                await self._reply(update, "Не понял выбор. Напиши номер или тикер из списка.")
+            chosen = self._select_match(cleaned_query, pending_matches)
+            if chosen:
+                context.user_data.pop("pending_matches", None)
+                original_query = context.user_data.pop("pending_query", query)
+                await self._send_report(update, chosen, original_query)
+                return
+            candidate_symbols = {match.symbol.upper() for match in pending_matches}
+            is_selection_like = cleaned_query.isdigit() or cleaned_query.upper() in candidate_symbols
+            if not cleaned_query or is_selection_like:
+                await self._reply(update, "?? ????? ?????. ?????? ????? ??? ????? ?? ??????.")
                 return
             context.user_data.pop("pending_matches", None)
-            original_query = context.user_data.pop("pending_query", query)
-            await self._send_report(update, chosen, original_query)
+            context.user_data.pop("pending_query", None)
+
+        if not cleaned_query:
+            await self._reply(update, "?? ??????? ?????????? ???????? ?? ???????. ?????? ???????? ??? ?????.")
             return
 
-        matches = self.service.match_companies(query)
+        matches = self.service.match_companies(cleaned_query)
         if not matches:
             await self._reply(update, "Не удалось распознать компанию по запросу. Уточни название или тикер.")
             return
@@ -761,3 +838,4 @@ def run_bot(
     application = build_application(token, cfg, model_path=model_path)
     LOGGER.info("Starting Telegram bot...")
     application.run_polling()
+

@@ -1,13 +1,7 @@
-﻿experiment_name: baseline_multilingual
+﻿experiment_name: smoke_test
 
 data:
-  tickers:
-    - AAPL
-    - MSFT
-    - NVDA
-    - XOM
-    - KO
-    - '^NDX'
+  tickers: [AAPL, MSFT, NVDA, XOM, KO, ^NDX]
   start_date: '2025-08-20'
   end_date: '2025-09-20'
   interval: 1d

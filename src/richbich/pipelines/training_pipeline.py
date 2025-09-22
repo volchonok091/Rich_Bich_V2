@@ -1,4 +1,4 @@
-"""End-to-end training pipeline."""
+﻿"""End-to-end training pipeline."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,6 +9,7 @@ import pandas as pd
 from richbich.config import TrainingConfig
 from richbich.data.news_fetcher import fetch_all_news
 from richbich.data.price_loader import download_prices
+from richbich.utils.aliases import register_aliases, query_fallback_terms
 from richbich.features.feature_builder import FeatureBuilder
 from richbich.modeling.trainer import ModelTrainer
 from richbich.nlp.sentiment import SentimentAnalyzer
@@ -61,3 +62,4 @@ class TrainingPipeline:
         prices, news, features = self.prepare_datasets()
         metrics = self.trainer.train(features)
         return prices, news, features, metrics
+

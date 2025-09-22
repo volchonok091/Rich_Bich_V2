@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Iterable, List, Optional
 
 import numpy as np
@@ -50,6 +51,14 @@ class SentimentAnalyzer:
         self._tokenizer = None
         self._model = None
         self._device = None
+        backend = (os.getenv("RICHBICH_SENTIMENT_BACKEND") or "heuristic").strip().lower()
+        if backend not in {"transformer", "heuristic"}:
+            LOGGER.warning("Unknown sentiment backend '%s'; defaulting to heuristic", backend)
+            backend = "heuristic"
+        self._backend = backend
+        if backend != "transformer":
+            LOGGER.info("Using heuristic sentiment backend (%s)", backend)
+            return
 
         if AutoTokenizer is None or AutoModelForSequenceClassification is None or torch is None:
             LOGGER.warning(

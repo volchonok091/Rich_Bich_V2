@@ -26,6 +26,7 @@ class NewsConfig:
     batch_days: int = 7
     sleep_seconds: float = 1.0
     cache_dir: Path = Path("data/raw/news")
+    inference_window_days: int = 60
 
     def queries_for(self, ticker: str) -> List[str]:
         return self.per_ticker_queries.get(ticker.upper(), [])
@@ -47,6 +48,8 @@ class ModelConfig:
     random_state: int = 42
     params: Dict[str, Any] = field(default_factory=dict)
     model_dir: Path = Path("models")
+    direction_threshold: float = 0.6
+    neutral_band: float = 0.05
 
 
 @dataclass
